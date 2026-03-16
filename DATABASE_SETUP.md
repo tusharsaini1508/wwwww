@@ -97,6 +97,11 @@ In Expo app:
 - Backend can run on Railway/Render/Fly.io/Vercel Functions.
 - Set environment variables in the backend hosting platform.
 
+Backend CORS example:
+`CORS_ORIGIN=https://your-app.vercel.app,https://*.vercel.app`
+
+This is required if your frontend is deployed on Vercel and your API is deployed elsewhere.
+
 ### 9. Production checklist
 - Enforce HTTPS only.
 - Rotate `JWT_SECRET` regularly.
