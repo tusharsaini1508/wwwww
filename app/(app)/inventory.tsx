@@ -13,6 +13,18 @@ import { useAppStore } from "../../src/store/useAppStore";
 import { formatNumber } from "../../src/lib/format";
 import { useCan } from "../../src/hooks/useCurrentUser";
 
+const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/+$/, "");
+
+type ApiInventoryBalance = {
+  id: string;
+  companyId: string;
+  itemSku: string;
+  itemName: string;
+  warehouseCode: string;
+  quantity: number;
+  updatedAt: string;
+};
+
 type InventoryRow = {
   id: string;
   item: string;
@@ -53,6 +65,7 @@ export default function InventoryScreen() {
   const locations = useAppStore((state) => state.locations);
   const warehouses = useAppStore((state) => state.warehouses);
   const inventory = useAppStore((state) => state.inventory);
+  const authToken = useAppStore((state) => state.authToken);
   const upsertInventoryBalance = useAppStore((state) => state.upsertInventoryBalance);
   const [selectedItemId, setSelectedItemId] = useState(items[0]?.id ?? "");
   const [selectedBinId, setSelectedBinId] = useState(bins[0]?.id ?? "");
@@ -63,6 +76,50 @@ export default function InventoryScreen() {
   const [lineSideRack, setLineSideRack] = useState("0");
   const [lineSideBin, setLineSideBin] = useState("0");
   const [annualCheck, setAnnualCheck] = useState(false);
+  const [remoteInventory, setRemoteInventory] = useState<ApiInventoryBalance[] | null>(null);
+  const [loadingRemote, setLoadingRemote] = useState(false);
+  const [upsertingRemote, setUpsertingRemote] = useState(false);
+
+  const loadInventory = async () => {
+      if (!API_BASE_URL || !authToken) {
+        setRemoteInventory(null);
+        return;
+      }
+
+      setLoadingRemote(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/inventory`, {
+          headers: {
+            Authorization: `Bearer ${authToken}`
+          }
+        });
+        if (!response.ok) {
+          setRemoteInventory(null);
+          return;
+        }
+        const payload = (await response.json()) as { inventory?: ApiInventoryBalance[] };
+        setRemoteInventory(payload.inventory ?? []);
+      } catch {
+        setRemoteInventory(null);
+      } finally {
+        setLoadingRemote(false);
+      }
+    };
+
+  useEffect(() => {
+    void loadInventory();
+  }, [authToken]);
+
+  const apiMode = Boolean(API_BASE_URL && authToken && remoteInventory !== null);
+
+  const warehouseByLocationId = useMemo(
+    () => new Map(warehouses.map((warehouse) => [warehouse.id, warehouse])),
+    [warehouses]
+  );
+  const locationById = useMemo(
+    () => new Map(locations.map((location) => [location.id, location])),
+    [locations]
+  );
 
   useEffect(() => {
     if (!selectedItemId && items[0]) {
@@ -76,7 +133,7 @@ export default function InventoryScreen() {
     }
   }, [bins, selectedBinId]);
 
-  const rows = useMemo(() => {
+  const localRows = useMemo(() => {
     const itemMap = new Map(items.map((item) => [item.id, item]));
     const binMap = new Map(bins.map((bin) => [bin.id, bin]));
     const locationMap = new Map(locations.map((loc) => [loc.id, loc]));
@@ -117,6 +174,41 @@ export default function InventoryScreen() {
       };
     });
   }, [bins, inventory, items, locations, warehouses]);
+
+  const remoteRows = useMemo(() => {
+    if (!remoteInventory) {
+      return [] as InventoryRow[];
+    }
+
+    return remoteInventory.map<InventoryRow>((balance) => ({
+      id: balance.id,
+      item: balance.itemName,
+      itemCode: balance.itemSku,
+      warehouse: balance.warehouseCode,
+      location: "-",
+      rackNumber: "-",
+      bin: "-",
+      binNumber: "-",
+      binCapacity: "-",
+      onHand: formatNumber(balance.quantity),
+      reserved: "0",
+      available: formatNumber(balance.quantity),
+      stockValue: "-",
+      reorderPoint: "-",
+      safetyStock: "-",
+      reorderQuantity: "-",
+      minStock: "-",
+      maxStock: "-",
+      stockMethod: "-",
+      lineSideRack: "-",
+      lineSideBin: "-",
+      annualCheck: "-",
+      lot: "-",
+      expiry: "-"
+    }));
+  }, [remoteInventory]);
+
+  const rows = remoteInventory ? remoteRows : localRows;
 
   const filteredRows = useMemo(() => {
     const needle = deferredQuery.trim().toLowerCase();
@@ -175,6 +267,63 @@ export default function InventoryScreen() {
     setAnnualCheck(false);
   }, [selectedBalance, selectedBinId, selectedItemId]);
 
+  const selectedRemoteBalance = useMemo(() => {
+    if (!remoteInventory) {
+      return null;
+    }
+
+    const selectedItem = items.find((item) => item.id === selectedItemId);
+    const selectedBin = bins.find((bin) => bin.id === selectedBinId);
+    const selectedLocation = selectedBin ? locationById.get(selectedBin.locationId) : null;
+    const selectedWarehouse = selectedLocation
+      ? warehouseByLocationId.get(selectedLocation.warehouseId)
+      : null;
+
+    if (!selectedItem || !selectedWarehouse) {
+      return null;
+    }
+
+    return (
+      remoteInventory.find(
+        (entry) =>
+          entry.itemSku === selectedItem.sku && entry.warehouseCode === selectedWarehouse.name
+      ) ?? null
+    );
+  }, [
+    bins,
+    items,
+    locationById,
+    remoteInventory,
+    selectedBinId,
+    selectedItemId,
+    warehouseByLocationId
+  ]);
+
+  useEffect(() => {
+    if (!apiMode) {
+      return;
+    }
+
+    if (!selectedRemoteBalance) {
+      setOnHand("0");
+      setReserved("0");
+      setLotCode("");
+      setExpiryDate("");
+      setLineSideRack("0");
+      setLineSideBin("0");
+      setAnnualCheck(false);
+      return;
+    }
+
+    setOnHand(String(selectedRemoteBalance.quantity));
+    setReserved("0");
+    setLotCode("");
+    setExpiryDate("");
+    setLineSideRack("0");
+    setLineSideBin("0");
+    setAnnualCheck(false);
+  }, [apiMode, selectedRemoteBalance]);
+
   if (!canView) {
     return (
       <Screen>
@@ -190,6 +339,13 @@ export default function InventoryScreen() {
         title="Inventory Control"
         subtitle="Track stock by bin, lot, and availability."
       />
+      {loadingRemote ? (
+        <Text style={styles.remoteMeta}>Loading inventory from backend...</Text>
+      ) : remoteInventory ? (
+        <Text style={styles.remoteMeta}>Showing inventory from backend API.</Text>
+      ) : (
+        <Text style={styles.remoteMeta}>Using local inventory data (API unavailable).</Text>
+      )}
 
       <SectionHeader
         title="Stock Editor"
@@ -341,11 +497,60 @@ export default function InventoryScreen() {
             </View>
 
             <Button
-              label={selectedBalance ? "Update balance" : "Create balance"}
-              onPress={() => {
+              label={
+                apiMode
+                  ? selectedRemoteBalance
+                    ? "Update backend balance"
+                    : "Create backend balance"
+                  : selectedBalance
+                  ? "Update balance"
+                  : "Create balance"
+              }
+              onPress={async () => {
                 if (!selectedItemId || !selectedBinId) {
                   return;
                 }
+
+                if (apiMode) {
+                  const selectedItem = items.find((item) => item.id === selectedItemId);
+                  const selectedBin = bins.find((bin) => bin.id === selectedBinId);
+                  const selectedLocation = selectedBin
+                    ? locationById.get(selectedBin.locationId)
+                    : null;
+                  const selectedWarehouse = selectedLocation
+                    ? warehouseByLocationId.get(selectedLocation.warehouseId)
+                    : null;
+
+                  if (!selectedItem || !selectedWarehouse) {
+                    return;
+                  }
+
+                  try {
+                    setUpsertingRemote(true);
+                    const response = await fetch(`${API_BASE_URL}/api/inventory/upsert`, {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${authToken}`
+                      },
+                      body: JSON.stringify({
+                        itemSku: selectedItem.sku,
+                        itemName: selectedItem.name,
+                        warehouseCode: selectedWarehouse.name,
+                        quantity: Number(onHand)
+                      })
+                    });
+
+                    if (response.ok) {
+                      await loadInventory();
+                    }
+                  } finally {
+                    setUpsertingRemote(false);
+                  }
+
+                  return;
+                }
+
                 upsertInventoryBalance({
                   itemId: selectedItemId,
                   binId: selectedBinId,
@@ -358,7 +563,7 @@ export default function InventoryScreen() {
                   annualCheckCompleted: annualCheck
                 });
               }}
-              disabled={!selectedItemId || !selectedBinId}
+              disabled={!selectedItemId || !selectedBinId || upsertingRemote}
             />
           </>
         )}
@@ -453,6 +658,11 @@ export default function InventoryScreen() {
 }
 
 const styles = StyleSheet.create({
+  remoteMeta: {
+    marginBottom: theme.spacing.sm,
+    fontSize: 12,
+    color: theme.colors.inkSubtle
+  },
   searchCard: {
     marginBottom: theme.spacing.lg
   },

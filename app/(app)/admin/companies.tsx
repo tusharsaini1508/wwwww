@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { Screen } from "../../../src/components/Screen";
 import { SectionHeader } from "../../../src/components/SectionHeader";
@@ -15,11 +15,20 @@ import { Company } from "../../../src/types";
 import { useCurrentUser } from "../../../src/hooks/useCurrentUser";
 
 const plans: Company["plan"][] = ["Starter", "Growth", "Enterprise"];
+const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/+$/, "");
+
+type ApiCompany = {
+  id: string;
+  name: string;
+  plan: Company["plan"];
+  active: boolean;
+};
 
 export default function CompaniesScreen() {
   const user = useCurrentUser();
   const companies = useAppStore((state) => state.companies);
   const users = useAppStore((state) => state.users);
+  const authToken = useAppStore((state) => state.authToken);
   const companyOverrides = useAppStore((state) => state.companyOverrides);
   const createCompany = useAppStore((state) => state.createCompany);
   const updateCompany = useAppStore((state) => state.updateCompany);
@@ -28,9 +37,46 @@ export default function CompaniesScreen() {
   const [name, setName] = useState("");
   const [plan, setPlan] = useState<Company["plan"]>("Growth");
   const [error, setError] = useState("");
+  const [remoteCompanies, setRemoteCompanies] = useState<ApiCompany[] | null>(null);
+  const [loadingRemote, setLoadingRemote] = useState(false);
+  const [savingCompanyId, setSavingCompanyId] = useState<string | null>(null);
 
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const canCreate = Boolean(name.trim());
+
+  const loadCompanies = async () => {
+      if (!API_BASE_URL || !authToken) {
+        setRemoteCompanies(null);
+        return;
+      }
+
+      setLoadingRemote(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/companies`, {
+          headers: {
+            Authorization: `Bearer ${authToken}`
+          }
+        });
+        if (!response.ok) {
+          setRemoteCompanies(null);
+          return;
+        }
+        const payload = (await response.json()) as { companies?: ApiCompany[] };
+        setRemoteCompanies(payload.companies ?? []);
+      } catch {
+        setRemoteCompanies(null);
+      } finally {
+        setLoadingRemote(false);
+      }
+    };
+
+  useEffect(() => {
+    void loadCompanies();
+  }, [authToken]);
+
+  const apiMode = Boolean(API_BASE_URL && authToken && remoteCompanies !== null);
+
+  const displayedCompanies: Array<ApiCompany | Company> = remoteCompanies ?? companies;
 
   const adminMap = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -53,16 +99,50 @@ export default function CompaniesScreen() {
     );
   }
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
       setError("Company name is required.");
       return;
     }
-    if (companies.some((company) => company.name.toLowerCase() === trimmed.toLowerCase())) {
+    if (
+      displayedCompanies.some(
+        (company) => company.name.toLowerCase() === trimmed.toLowerCase()
+      )
+    ) {
       setError("A company with this name already exists.");
       return;
     }
+    if (apiMode) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/companies`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ name: trimmed, plan })
+        });
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as {
+            message?: string;
+          };
+          setError(payload.message ?? "Unable to create company.");
+          return;
+        }
+
+        setError("");
+        setName("");
+        setPlan("Growth");
+        await loadCompanies();
+        return;
+      } catch {
+        setError("Unable to reach backend API.");
+        return;
+      }
+    }
+
     setError("");
     createCompany({ name: trimmed, active: true, plan });
     setName("");
@@ -75,6 +155,13 @@ export default function CompaniesScreen() {
         title="Company Access"
         subtitle="Create companies and control their feature entitlements."
       />
+      {loadingRemote ? (
+        <Text style={styles.remoteMeta}>Loading companies from backend...</Text>
+      ) : remoteCompanies ? (
+        <Text style={styles.remoteMeta}>Showing companies from backend API.</Text>
+      ) : (
+        <Text style={styles.remoteMeta}>Using local company data (API unavailable).</Text>
+      )}
       <AdminTabs />
       <ScrollView contentContainerStyle={styles.scroll}>
         <Card style={styles.card}>
@@ -115,30 +202,62 @@ export default function CompaniesScreen() {
             disabled={!canCreate}
             accessibilityLabel="Create company"
           />
+          {apiMode ? (
+            <Text style={styles.readOnlyHint}>
+              Company updates are being saved to backend API.
+            </Text>
+          ) : null}
         </Card>
 
         <View style={styles.stack}>
-          {companies.map((company) => {
+          {displayedCompanies.map((company) => {
             const admins = adminMap.get(company.id) ?? [];
+            const companyPlan = "plan" in company ? company.plan : "Enterprise";
             return (
               <Card key={company.id}>
                 <View style={styles.companyHeader}>
                   <View>
                     <Text style={styles.companyName}>{company.name}</Text>
                     <Text style={styles.companyMeta}>
-                      Plan: {company.plan} | {company.active ? "Active" : "Suspended"}
+                      Plan: {companyPlan} | {company.active ? "Active" : "Suspended"}
                     </Text>
                     <Text style={styles.companyMeta}>
                       Admins: {admins.length > 0 ? admins.join(", ") : "None"}
                     </Text>
                   </View>
-                  <Tag label={company.plan} tone="info" />
+                  <Tag label={companyPlan} tone="info" />
                 </View>
                 <View style={styles.toggleRow}>
                   <Text style={styles.toggleLabel}>Company active</Text>
                   <Switch
                     value={company.active}
-                    onValueChange={(value) => updateCompany(company.id, { active: value })}
+                    onValueChange={async (value) => {
+                      if (apiMode) {
+                        try {
+                          setSavingCompanyId(company.id);
+                          const response = await fetch(
+                            `${API_BASE_URL}/api/companies/${company.id}`,
+                            {
+                              method: "PATCH",
+                              headers: {
+                                "Content-Type": "application/json",
+                                Authorization: `Bearer ${authToken}`
+                              },
+                              body: JSON.stringify({ active: value })
+                            }
+                          );
+                          if (response.ok) {
+                            await loadCompanies();
+                          }
+                        } finally {
+                          setSavingCompanyId(null);
+                        }
+                        return;
+                      }
+
+                      updateCompany(company.id, { active: value });
+                    }}
+                    disabled={savingCompanyId === company.id}
                   />
                 </View>
                 <View style={styles.permissionList}>
@@ -157,6 +276,7 @@ export default function CompaniesScreen() {
                           onValueChange={(value) =>
                             setCompanyOverride(company.id, permission, value)
                           }
+                          disabled={apiMode}
                         />
                       </View>
                     );
@@ -172,6 +292,16 @@ export default function CompaniesScreen() {
 }
 
 const styles = StyleSheet.create({
+  remoteMeta: {
+    marginBottom: theme.spacing.sm,
+    fontSize: 12,
+    color: theme.colors.inkSubtle
+  },
+  readOnlyHint: {
+    marginTop: theme.spacing.sm,
+    fontSize: 11,
+    color: theme.colors.inkSubtle
+  },
   scroll: {
     paddingBottom: theme.spacing.xl
   },

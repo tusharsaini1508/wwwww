@@ -279,6 +279,7 @@ const normalizeMaterialReceipts = (records: MaterialReceiptRecord[], items: Item
 export type AppState = {
   currentUserId: string | null;
   authSession: { userId: string; expiresAt: number } | null;
+  authToken: string | null;
   users: User[];
   roleOverrides: RoleOverrides;
   companies: Company[];
@@ -308,6 +309,23 @@ export type AppState = {
     adminName: string;
     email: string;
     password: string;
+  }) => void;
+  hydrateAuthFromApi: (payload: {
+    accessToken?: string;
+    user: {
+      id: string;
+      companyId: string;
+      name: string;
+      email: string;
+      role: Role;
+      active: boolean;
+    };
+    company?: {
+      id: string;
+      name: string;
+      active: boolean;
+    };
+    rememberForMs?: number;
   }) => void;
   loginAs: (userId: string, rememberForMs?: number) => void;
   logout: () => void;
@@ -394,6 +412,7 @@ export const useAppStore = create<AppState>()(
     (set) => ({
       currentUserId: null,
       authSession: null,
+      authToken: null,
       users: [...users],
       roleOverrides: {},
       companies: [...companies],
@@ -448,12 +467,73 @@ export const useAppStore = create<AppState>()(
             users: [superAdmin],
             currentUserId: userId,
             authSession: { userId, expiresAt: Date.now() + SESSION_DURATION_MS },
+            authToken: null,
             audit: [
               {
                 id: createId("audit"),
                 actor: adminName || "Super Admin",
                 action: "Bootstrap platform",
                 entity: companyName || "Company",
+                createdAt: getISTNow()
+              },
+              ...state.audit
+            ]
+          };
+        }),
+      hydrateAuthFromApi: (payload) =>
+        set((state) => {
+          const safeDuration =
+            Number.isFinite(payload.rememberForMs) &&
+            (payload.rememberForMs ?? 0) > 0
+              ? (payload.rememberForMs as number)
+              : SESSION_DURATION_MS;
+          const expiresAt = Date.now() + safeDuration;
+
+          const companyPatch = payload.company
+            ? {
+                id: payload.company.id,
+                name: payload.company.name,
+                active: payload.company.active,
+                plan: "Enterprise" as const
+              }
+            : null;
+
+          const nextCompanies = companyPatch
+            ? state.companies.some((company) => company.id === companyPatch.id)
+              ? state.companies.map((company) =>
+                  company.id === companyPatch.id ? { ...company, ...companyPatch } : company
+                )
+              : [...state.companies, companyPatch]
+            : state.companies;
+
+          const nextUser: User = {
+            id: payload.user.id,
+            companyId: payload.user.companyId,
+            name: payload.user.name,
+            email: payload.user.email,
+            role: payload.user.role,
+            active: payload.user.active,
+            password: ""
+          };
+
+          const nextUsers = state.users.some((user) => user.id === nextUser.id)
+            ? state.users.map((user) =>
+                user.id === nextUser.id ? { ...user, ...nextUser } : user
+              )
+            : [...state.users, nextUser];
+
+          return {
+            companies: nextCompanies,
+            users: nextUsers,
+            currentUserId: nextUser.id,
+            authSession: { userId: nextUser.id, expiresAt },
+            authToken: payload.accessToken ?? state.authToken ?? null,
+            audit: [
+              {
+                id: createId("audit"),
+                actor: nextUser.name,
+                action: "Logged in",
+                entity: nextUser.id,
                 createdAt: getISTNow()
               },
               ...state.audit
@@ -471,6 +551,7 @@ export const useAppStore = create<AppState>()(
           return {
             currentUserId: userId,
             authSession: { userId, expiresAt },
+            authToken: null,
             audit: [
               {
                 id: createId("audit"),
@@ -490,6 +571,7 @@ export const useAppStore = create<AppState>()(
           return {
             currentUserId: null,
             authSession: null,
+            authToken: null,
             audit: [
               {
                 id: createId("audit"),
@@ -1798,14 +1880,22 @@ export const useAppStore = create<AppState>()(
     {
       name: "wms-app-store",
       storage: createJSONStorage(getStorage),
-      version: 2,
+      version: 3,
       migrate: (persistedState: unknown, version) => {
         if (version < 2) {
           const legacy = (persistedState ?? {}) as Partial<AppState>;
           return {
             ...legacy,
             currentUserId: null,
-            authSession: null
+            authSession: null,
+            authToken: null
+          } as AppState;
+        }
+        if (version < 3) {
+          const prior = (persistedState ?? {}) as Partial<AppState>;
+          return {
+            ...prior,
+            authToken: null
           } as AppState;
         }
         return persistedState as AppState;
@@ -1818,6 +1908,7 @@ export const useAppStore = create<AppState>()(
         if (!state.currentUserId || !state.authSession) {
           state.currentUserId = null;
           state.authSession = null;
+          state.authToken = null;
           return;
         }
 
@@ -1828,6 +1919,7 @@ export const useAppStore = create<AppState>()(
         ) {
           state.currentUserId = null;
           state.authSession = null;
+          state.authToken = null;
           return;
         }
 
@@ -1835,6 +1927,7 @@ export const useAppStore = create<AppState>()(
         if (!persistedUser || !persistedUser.active) {
           state.currentUserId = null;
           state.authSession = null;
+          state.authToken = null;
           return;
         }
 
@@ -1843,6 +1936,7 @@ export const useAppStore = create<AppState>()(
           if (company && !company.active) {
             state.currentUserId = null;
             state.authSession = null;
+            state.authToken = null;
           }
         }
       }

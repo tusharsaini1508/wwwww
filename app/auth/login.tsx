@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Screen } from "../../src/components/Screen";
@@ -8,15 +8,32 @@ import { Button } from "../../src/components/Button";
 import { theme } from "../../src/theme";
 import { useAppStore } from "../../src/store/useAppStore";
 import { useUiStore } from "../../src/store/useUiStore";
+import { Role } from "../../src/types";
 
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
+const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/+$/, "");
+type SetupStatus = "checking" | "required" | "complete";
+
+type ApiUser = {
+  id: string;
+  companyId: string;
+  name: string;
+  email: string;
+  role: Role;
+  active: boolean;
+};
+
+type ApiCompany = {
+  id: string;
+  name: string;
+  active: boolean;
+};
 
 export default function LoginScreen() {
   const users = useAppStore((state) => state.users);
   const companies = useAppStore((state) => state.companies);
-  const loginAs = useAppStore((state) => state.loginAs);
-  const bootstrapSuperAdmin = useAppStore((state) => state.bootstrapSuperAdmin);
+  const hydrateAuthFromApi = useAppStore((state) => state.hydrateAuthFromApi);
   const showToast = useUiStore((state) => state.showToast);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -29,8 +46,34 @@ export default function LoginScreen() {
   const [setupEmail, setSetupEmail] = useState("");
   const [setupPassword, setSetupPassword] = useState("");
   const [setupError, setSetupError] = useState("");
+  const [setupStatus, setSetupStatus] = useState<SetupStatus>("checking");
+  const [setupLoading, setSetupLoading] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
 
-  const isFirstRun = users.length === 0;
+  const isFirstRun = setupStatus === "required";
+
+  useEffect(() => {
+    const loadSetupStatus = async () => {
+      if (!API_BASE_URL) {
+        setSetupStatus("complete");
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/setup/status`);
+        if (!response.ok) {
+          setSetupStatus("complete");
+          return;
+        }
+        const payload = (await response.json()) as { initialized?: boolean };
+        setSetupStatus(payload.initialized ? "complete" : "required");
+      } catch {
+        setSetupStatus("complete");
+      }
+    };
+
+    void loadSetupStatus();
+  }, []);
 
   const usersByEmail = useMemo(() => {
     const map = new Map<string, (typeof users)[number]>();
@@ -62,7 +105,7 @@ export default function LoginScreen() {
     );
   }, [adminName, companyName, setupEmail, setupPassword]);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     const normalizedEmail = normalizeEmail(email);
     let nextEmailError = "";
     let nextPasswordError = "";
@@ -86,32 +129,73 @@ export default function LoginScreen() {
       return;
     }
 
-    const matchedUser = usersByEmail.get(normalizedEmail);
-    if (!matchedUser || matchedUser.password !== password) {
-      setFormError("Invalid email or password.");
-      showToast("Invalid email or password.", "danger");
+    if (!API_BASE_URL) {
+      setFormError("API base URL is not configured.");
+      showToast("API base URL is missing in env.", "danger");
       return;
     }
-    const company = companiesById.get(matchedUser.companyId);
-    if (company && !company.active) {
-      setFormError("This company is suspended. Contact your administrator.");
-      showToast("Company is suspended. Contact your administrator.", "warning");
-      return;
+
+    setLoginLoading(true);
+    try {
+      const loginResponse = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ email: normalizedEmail, password })
+      });
+
+      if (!loginResponse.ok) {
+        const payload = (await loginResponse.json().catch(() => ({}))) as {
+          message?: string;
+        };
+        const message = payload.message ?? "Invalid email or password.";
+        setFormError(message);
+        showToast(message, "danger");
+        return;
+      }
+
+      const loginPayload = (await loginResponse.json()) as {
+        accessToken: string;
+        user: ApiUser;
+      };
+
+      const companyResponse = await fetch(`${API_BASE_URL}/api/companies`, {
+        headers: {
+          Authorization: `Bearer ${loginPayload.accessToken}`
+        }
+      });
+
+      let resolvedCompany: ApiCompany | undefined;
+      if (companyResponse.ok) {
+        const companyPayload = (await companyResponse.json()) as {
+          companies?: ApiCompany[];
+        };
+        resolvedCompany = companyPayload.companies?.find(
+          (company) => company.id === loginPayload.user.companyId
+        );
+      }
+
+      hydrateAuthFromApi({
+        accessToken: loginPayload.accessToken,
+        user: loginPayload.user,
+        company: resolvedCompany
+      });
+
+      setEmailError("");
+      setPasswordError("");
+      setFormError("");
+      showToast(`Welcome back, ${loginPayload.user.name}.`, "success");
+      router.replace("/dashboard");
+    } catch {
+      setFormError("Unable to reach API for login.");
+      showToast("Unable to reach API for login.", "danger");
+    } finally {
+      setLoginLoading(false);
     }
-    if (!matchedUser.active) {
-      setFormError("This account is inactive. Contact your administrator.");
-      showToast("This account is inactive.", "warning");
-      return;
-    }
-    setEmailError("");
-    setPasswordError("");
-    setFormError("");
-    loginAs(matchedUser.id);
-    showToast(`Welcome back, ${matchedUser.name}.`, "success");
-    router.replace("/dashboard");
   };
 
-  const handleSetup = () => {
+  const handleSetup = async () => {
     const trimmedCompany = companyName.trim();
     const trimmedAdmin = adminName.trim();
     const normalizedEmail = normalizeEmail(setupEmail);
@@ -132,15 +216,58 @@ export default function LoginScreen() {
       return;
     }
 
+    if (!API_BASE_URL) {
+      setSetupError("EXPO_PUBLIC_API_BASE_URL is not configured.");
+      showToast("API base URL is missing in env.", "danger");
+      return;
+    }
+
     setSetupError("");
-    bootstrapSuperAdmin({
-      companyName: trimmedCompany,
-      adminName: trimmedAdmin,
-      email: normalizedEmail,
-      password: setupPassword
-    });
-    showToast("Setup complete. Welcome!", "success");
-    router.replace("/dashboard");
+    setSetupLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/setup/init`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          companyName: trimmedCompany,
+          name: trimmedAdmin,
+          email: normalizedEmail,
+          password: setupPassword
+        })
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { message?: string };
+        const message = payload.message ?? "Setup failed. Please try again.";
+        setSetupError(message);
+        showToast(message, "danger");
+        return;
+      }
+
+      const payload = (await response.json()) as {
+        accessToken: string;
+        user: ApiUser;
+        company?: ApiCompany;
+      };
+
+      hydrateAuthFromApi({
+        accessToken: payload.accessToken,
+        user: payload.user,
+        company: payload.company
+      });
+
+      setSetupStatus("complete");
+      showToast("Setup complete. Welcome!", "success");
+      router.replace("/dashboard");
+    } catch {
+      setSetupError("Unable to reach API for setup.");
+      showToast("Unable to reach API for setup.", "danger");
+    } finally {
+      setSetupLoading(false);
+    }
   };
 
   return (
@@ -156,7 +283,12 @@ export default function LoginScreen() {
           />
         </View>
         <Card style={styles.card}>
-          {isFirstRun ? (
+          {setupStatus === "checking" ? (
+            <>
+              <Text style={styles.title}>Checking setup</Text>
+              <Text style={styles.caption}>Connecting to backend and loading setup status.</Text>
+            </>
+          ) : isFirstRun ? (
             <>
               <Text style={styles.title}>First-time setup</Text>
               <Text style={styles.caption}>
@@ -225,7 +357,7 @@ export default function LoginScreen() {
               <Button
                 label="Create super admin"
                 onPress={handleSetup}
-                disabled={!canSetup}
+                disabled={!canSetup || setupLoading}
                 accessibilityLabel="Create super admin"
               />
               {setupError ? <Text style={styles.formError}>{setupError}</Text> : null}
@@ -288,7 +420,7 @@ export default function LoginScreen() {
               <Button
                 label="Login"
                 onPress={handleLogin}
-                disabled={!canSubmit}
+                disabled={!canSubmit || loginLoading}
                 accessibilityLabel="Login"
               />
               {formError ? <Text style={styles.formError}>{formError}</Text> : null}
