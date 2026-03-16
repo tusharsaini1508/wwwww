@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Warehouse WMS",
+    "slug": "warehouse-wms",
+    "version": "1.0.0",
+    "scheme": "warehousewms",
+    "orientation": "portrait",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#F4F1EC"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow access to your photos to set item images.",
+          "cameraPermission": "Allow access to your camera to take item photos."
+        }
+      ]
+    ]
+  }
+}

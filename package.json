@@ -1,0 +1,39 @@
+{
+  "name": "warehouse-wms",
+  "version": "1.0.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "lint": "eslint . --ext .ts,.tsx",
+    "build": "npm run export:web",
+    "vercel-build": "npm run export:web",
+    "export:web": "npx expo export --platform web --output-dir dist",
+    "postinstall": "node scripts/patch-expo-cli.js"
+  },
+  "dependencies": {
+    "expo": "^55.0.6",
+    "expo-image-picker": "~55.0.12",
+    "expo-linking": "~6.2.2",
+    "expo-router": "^3.5.24",
+    "expo-status-bar": "~1.11.1",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-native": "0.73.6",
+    "react-native-gesture-handler": "~2.14.0",
+    "react-native-safe-area-context": "4.8.2",
+    "react-native-screens": "~3.29.0",
+    "react-native-web": "~0.19.8",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@types/react": "~18.2.45",
+    "eslint": "^8.57.0",
+    "eslint-config-expo": "^7.0.0",
+    "typescript": "^5.4.5"
+  }
+}
