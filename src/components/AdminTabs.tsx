@@ -14,12 +14,12 @@ export const AdminTabs = () => {
   const canAudit = useCan("audit.view");
   const canFacilities = useCan("warehouse.edit");
   const isSuperAdmin = currentUser?.role === "SUPER_ADMIN";
-  const canAccessRoles = Boolean(isSuperAdmin || (currentUser?.role === "ADMIN" && canUsers));
+  const canAccessRoles = canRoles;
 
   const tabs = [
     { label: "Overview", href: "/admin", show: true },
     { label: "Users", href: "/admin/users", show: canUsers },
-    { label: "Access", href: "/admin/roles", show: canAccessRoles || canRoles },
+    { label: "Access", href: "/admin/roles", show: canAccessRoles },
     { label: "Companies", href: "/admin/companies", show: isSuperAdmin },
     { label: "Facilities", href: "/admin/facility", show: canFacilities },
     { label: "Products", href: "/admin/products", show: canProducts },

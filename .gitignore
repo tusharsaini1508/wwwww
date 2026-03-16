@@ -1,0 +1,22 @@
+# Added by GitGuard (Node.js, React)
+# Environment files contain secrets, API keys, and database credentials that should never be committed
+.env
+# Local environment overrides often contain developer-specific secrets
+.env.local
+# Environment-specific local files may contain sensitive overrides
+.env.*.local
+# Development environment secrets should not be shared
+.env.development.local
+# Production secrets must never be committed to version control
+.env.production.local
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.expo/
+dist/
+build/
+out/
+coverage/
+# Test environment secrets should not be committed
+.env.test.local

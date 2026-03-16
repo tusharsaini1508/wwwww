@@ -226,6 +226,9 @@ const normalizeBomLines = (lines: BomInputLine[], items: Item[]) => {
 
 const isIsoDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
 
+const SESSION_DURATION_DAYS = 7;
+const SESSION_DURATION_MS = SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000;
+
 const normalizeSalesRecords = (records: SalesRecord[], items: Item[]) => {
   const itemMap = new Map(items.map((item) => [item.id, item]));
   return records
@@ -275,6 +278,7 @@ const normalizeMaterialReceipts = (records: MaterialReceiptRecord[], items: Item
 
 export type AppState = {
   currentUserId: string | null;
+  authSession: { userId: string; expiresAt: number } | null;
   users: User[];
   roleOverrides: RoleOverrides;
   companies: Company[];
@@ -305,7 +309,7 @@ export type AppState = {
     email: string;
     password: string;
   }) => void;
-  loginAs: (userId: string) => void;
+  loginAs: (userId: string, rememberForMs?: number) => void;
   logout: () => void;
   createUser: (payload: Omit<User, "id">) => void;
   updateUser: (userId: string, patch: Partial<User>) => void;
@@ -389,6 +393,7 @@ export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       currentUserId: null,
+      authSession: null,
       users: [...users],
       roleOverrides: {},
       companies: [...companies],
@@ -442,6 +447,7 @@ export const useAppStore = create<AppState>()(
             companies: [company],
             users: [superAdmin],
             currentUserId: userId,
+            authSession: { userId, expiresAt: Date.now() + SESSION_DURATION_MS },
             audit: [
               {
                 id: createId("audit"),
@@ -454,11 +460,17 @@ export const useAppStore = create<AppState>()(
             ]
           };
         }),
-      loginAs: (userId) =>
+      loginAs: (userId, rememberForMs = SESSION_DURATION_MS) =>
         set((state) => {
           const actor = state.users.find((user) => user.id === userId)?.name ?? "User";
+          const safeDuration =
+            Number.isFinite(rememberForMs) && rememberForMs > 0
+              ? rememberForMs
+              : SESSION_DURATION_MS;
+          const expiresAt = Date.now() + safeDuration;
           return {
             currentUserId: userId,
+            authSession: { userId, expiresAt },
             audit: [
               {
                 id: createId("audit"),
@@ -477,6 +489,7 @@ export const useAppStore = create<AppState>()(
             state.users.find((user) => user.id === state.currentUserId)?.name ?? "User";
           return {
             currentUserId: null,
+            authSession: null,
             audit: [
               {
                 id: createId("audit"),
@@ -1784,7 +1797,55 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "wms-app-store",
-      storage: createJSONStorage(getStorage)
+      storage: createJSONStorage(getStorage),
+      version: 2,
+      migrate: (persistedState: unknown, version) => {
+        if (version < 2) {
+          const legacy = (persistedState ?? {}) as Partial<AppState>;
+          return {
+            ...legacy,
+            currentUserId: null,
+            authSession: null
+          } as AppState;
+        }
+        return persistedState as AppState;
+      },
+      onRehydrateStorage: () => (state) => {
+        if (!state) {
+          return;
+        }
+
+        if (!state.currentUserId || !state.authSession) {
+          state.currentUserId = null;
+          state.authSession = null;
+          return;
+        }
+
+        const now = Date.now();
+        if (
+          state.authSession.expiresAt <= now ||
+          state.authSession.userId !== state.currentUserId
+        ) {
+          state.currentUserId = null;
+          state.authSession = null;
+          return;
+        }
+
+        const persistedUser = state.users.find((user) => user.id === state.currentUserId);
+        if (!persistedUser || !persistedUser.active) {
+          state.currentUserId = null;
+          state.authSession = null;
+          return;
+        }
+
+        if (persistedUser.role !== "SUPER_ADMIN") {
+          const company = state.companies.find((item) => item.id === persistedUser.companyId);
+          if (company && !company.active) {
+            state.currentUserId = null;
+            state.authSession = null;
+          }
+        }
+      }
     }
   )
 );

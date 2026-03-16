@@ -17,7 +17,7 @@ export const PERMISSIONS: Permission[] = [
 ];
 
 export const ROLE_BASE_PERMISSIONS: Record<Role, Permission[]> = {
-  SUPER_ADMIN: [...PERMISSIONS],
+  SUPER_ADMIN: ["dashboard.view", "users.manage", "roles.manage"],
   ADMIN: [
     "dashboard.view",
     "inventory.view",

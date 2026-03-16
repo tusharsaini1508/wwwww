@@ -292,9 +292,6 @@ export default function LoginScreen() {
                 accessibilityLabel="Login"
               />
               {formError ? <Text style={styles.formError}>{formError}</Text> : null}
-              <Text style={styles.helpText}>
-                Admins and super admins manage access, roles, and permissions.
-              </Text>
             </>
           )}
         </Card>

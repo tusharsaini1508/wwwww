@@ -65,7 +65,7 @@ export default function AdminHome() {
             </Pressable>
           </Link>
         ) : null}
-        {canRoles || (user?.role === "ADMIN" && canUsers) || isSuperAdmin ? (
+        {canRoles ? (
           <Link href="/admin/roles" asChild>
             <Pressable style={styles.link}>
               <Card>

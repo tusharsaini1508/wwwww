@@ -14,6 +14,7 @@ import { Role } from "../../../src/types";
 import { useCan, useCurrentUser } from "../../../src/hooks/useCurrentUser";
 
 const roles: Role[] = ["SUPER_ADMIN", "ADMIN", "MANAGER", "PLANNER", "OPERATOR", "VIEWER"];
+const superAdminVisibleRoles: Role[] = ["ADMIN"];
 
 export default function UsersScreen() {
   const canManage = useCan("users.manage");
@@ -42,7 +43,7 @@ export default function UsersScreen() {
 
   const assignableRoles = useMemo(() => {
     if (isSuperAdmin) {
-      return roles;
+      return superAdminVisibleRoles;
     }
     return roles.filter((r) => r !== "SUPER_ADMIN" && r !== "ADMIN");
   }, [isSuperAdmin]);
@@ -54,7 +55,7 @@ export default function UsersScreen() {
 
   const visibleUsers = useMemo(() => {
     if (isSuperAdmin) {
-      return users;
+      return users.filter((user) => superAdminVisibleRoles.includes(user.role));
     }
     return users.filter((user) => user.companyId === currentUser?.companyId);
   }, [currentUser?.companyId, isSuperAdmin, users]);
@@ -310,7 +311,7 @@ export default function UsersScreen() {
               </Pressable>
               <Pressable
                 onPress={() => {
-                  const rotationPool = isSuperAdmin ? roles : assignableRoles;
+                  const rotationPool = isSuperAdmin ? superAdminVisibleRoles : assignableRoles;
                   const nextRole =
                     rotationPool[
                       (rotationPool.indexOf(user.role) + 1) % rotationPool.length
@@ -318,13 +319,15 @@ export default function UsersScreen() {
                   updateUser(user.id, { role: nextRole });
                 }}
                 disabled={
-                  (user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
-                  !isSuperAdmin
+                  ((user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
+                    !isSuperAdmin) ||
+                  isSuperAdmin
                 }
                 style={[
                   styles.secondaryButton,
-                  (user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
-                    !isSuperAdmin &&
+                  (((user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
+                    !isSuperAdmin) ||
+                    isSuperAdmin) &&
                     styles.disabledButton
                 ]}
               >

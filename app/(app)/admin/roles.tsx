@@ -186,38 +186,42 @@ export default function RolesScreen() {
           </Card>
         ) : null}
 
-        <Text style={styles.sectionHeading}>Team Role Access</Text>
-        <View style={styles.stack}>
-          {TEAM_ROLES.map((role) => (
-            <Card key={role}>
-              <Text style={styles.roleTitle}>{roleLabel(role)}</Text>
-              <View style={styles.featureList}>
-                {TEAM_FEATURES.map((feature) => {
-                  const state = getGroupState(role, feature, roleOverrides);
-                  return (
-                    <View key={`${role}-${feature.key}`} style={styles.featureRow}>
-                      <View style={styles.featureText}>
-                        <Text style={styles.featureLabel}>{feature.label}</Text>
-                        <Text style={styles.featureSub}>{feature.description}</Text>
-                        <Text style={styles.featureMeta}>
-                          Enabled {state.enabledCount}/{state.total}
-                        </Text>
-                      </View>
-                      <Switch
-                        value={state.enabled}
-                        onValueChange={(value) =>
-                          feature.permissions.forEach((permission) =>
-                            setRoleOverride(role, permission, value)
-                          )
-                        }
-                      />
-                    </View>
-                  );
-                })}
-              </View>
-            </Card>
-          ))}
-        </View>
+        {!isSuperAdmin ? (
+          <>
+            <Text style={styles.sectionHeading}>Team Role Access</Text>
+            <View style={styles.stack}>
+              {TEAM_ROLES.map((role) => (
+                <Card key={role}>
+                  <Text style={styles.roleTitle}>{roleLabel(role)}</Text>
+                  <View style={styles.featureList}>
+                    {TEAM_FEATURES.map((feature) => {
+                      const state = getGroupState(role, feature, roleOverrides);
+                      return (
+                        <View key={`${role}-${feature.key}`} style={styles.featureRow}>
+                          <View style={styles.featureText}>
+                            <Text style={styles.featureLabel}>{feature.label}</Text>
+                            <Text style={styles.featureSub}>{feature.description}</Text>
+                            <Text style={styles.featureMeta}>
+                              Enabled {state.enabledCount}/{state.total}
+                            </Text>
+                          </View>
+                          <Switch
+                            value={state.enabled}
+                            onValueChange={(value) =>
+                              feature.permissions.forEach((permission) =>
+                                setRoleOverride(role, permission, value)
+                              )
+                            }
+                          />
+                        </View>
+                      );
+                    })}
+                  </View>
+                </Card>
+              ))}
+            </View>
+          </>
+        ) : null}
       </ScrollView>
     </Screen>
   );
