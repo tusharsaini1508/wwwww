@@ -327,6 +327,17 @@ export type AppState = {
     };
     rememberForMs?: number;
   }) => void;
+  syncUsersFromApi: (
+    users: Array<{
+      id: string;
+      companyId: string;
+      name: string;
+      email: string;
+      role: Role;
+      active: boolean;
+    }>
+  ) => void;
+  syncCompaniesFromApi: (companies: Company[]) => void;
   loginAs: (userId: string, rememberForMs?: number) => void;
   logout: () => void;
   createUser: (payload: Omit<User, "id">) => void;
@@ -540,6 +551,34 @@ export const useAppStore = create<AppState>()(
             ]
           };
         }),
+      syncUsersFromApi: (incomingUsers) =>
+        set((state) => {
+          const currentPasswords = new Map(
+            state.users.map((user) => [user.id, user.password])
+          );
+
+          const incomingIds = new Set(incomingUsers.map((user) => user.id));
+          const preservedUsers = state.users.filter(
+            (user) => !incomingIds.has(user.id) && user.id === state.currentUserId
+          );
+
+          return {
+            users: [
+              ...preservedUsers,
+              ...incomingUsers.map((user) => ({
+                ...user,
+                password: currentPasswords.get(user.id) ?? ""
+              }))
+            ]
+          };
+        }),
+      syncCompaniesFromApi: (incomingCompanies) =>
+        set(() => ({
+          companies: incomingCompanies.map((company) => ({
+            ...company,
+            name: company.name.trim()
+          }))
+        })),
       loginAs: (userId, rememberForMs = SESSION_DURATION_MS) =>
         set((state) => {
           const actor = state.users.find((user) => user.id === userId)?.name ?? "User";
@@ -590,7 +629,15 @@ export const useAppStore = create<AppState>()(
           const actor =
             state.users.find((user) => user.id === state.currentUserId)?.name ??
             "System";
-          const nextUsers = [...state.users, { ...payload, id }];
+          const nextUsers = [
+            ...state.users,
+            {
+              ...payload,
+              id,
+              name: payload.name.trim(),
+              email: payload.email.trim().toLowerCase()
+            }
+          ];
           return {
             users: nextUsers,
             audit: [
@@ -611,7 +658,17 @@ export const useAppStore = create<AppState>()(
             state.users.find((user) => user.id === state.currentUserId)?.name ??
             "System";
           const updated = state.users.map((user) =>
-            user.id === userId ? { ...user, ...patch } : user
+            user.id === userId
+              ? {
+                  ...user,
+                  ...patch,
+                  name: typeof patch.name === "string" ? patch.name.trim() : user.name,
+                  email:
+                    typeof patch.email === "string"
+                      ? patch.email.trim().toLowerCase()
+                      : user.email
+                }
+              : user
           );
           return {
             users: updated,

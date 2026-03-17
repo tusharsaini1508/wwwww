@@ -10,25 +10,39 @@ import { FormField } from "../../../src/components/FormField";
 import { Button } from "../../../src/components/Button";
 import { theme } from "../../../src/theme";
 import { useAppStore } from "../../../src/store/useAppStore";
-import { Role } from "../../../src/types";
+import { Company, Role } from "../../../src/types";
 import { useCan, useCurrentUser } from "../../../src/hooks/useCurrentUser";
 
 const roles: Role[] = ["SUPER_ADMIN", "ADMIN", "MANAGER", "PLANNER", "OPERATOR", "VIEWER"];
 const superAdminVisibleRoles: Role[] = ["ADMIN"];
+const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/+$/, "");
+
+type ApiUser = {
+  id: string;
+  companyId: string;
+  name: string;
+  email: string;
+  role: Role;
+  active: boolean;
+};
 
 export default function UsersScreen() {
   const canManage = useCan("users.manage");
   const currentUser = useCurrentUser();
   const users = useAppStore((state) => state.users);
-  const createUser = useAppStore((state) => state.createUser);
-  const updateUser = useAppStore((state) => state.updateUser);
   const companies = useAppStore((state) => state.companies);
+  const authToken = useAppStore((state) => state.authToken);
+  const syncUsersFromApi = useAppStore((state) => state.syncUsersFromApi);
+  const syncCompaniesFromApi = useAppStore((state) => state.syncCompaniesFromApi);
+  const updateUser = useAppStore((state) => state.updateUser);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<Role>("OPERATOR");
   const [createError, setCreateError] = useState("");
+  const [pageError, setPageError] = useState("");
+  const [loading, setLoading] = useState(false);
   const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>({});
 
   const isSuperAdmin = currentUser?.role === "SUPER_ADMIN";
@@ -41,11 +55,56 @@ export default function UsersScreen() {
     }
   }, [companyId, defaultCompanyId]);
 
+  useEffect(() => {
+    const loadAdminData = async () => {
+      if (!canManage || !API_BASE_URL || !authToken) {
+        return;
+      }
+
+      setLoading(true);
+      setPageError("");
+
+      try {
+        const [usersResponse, companiesResponse] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/users`, {
+            headers: { Authorization: `Bearer ${authToken}` }
+          }),
+          fetch(`${API_BASE_URL}/api/companies`, {
+            headers: { Authorization: `Bearer ${authToken}` }
+          })
+        ]);
+
+        if (!usersResponse.ok) {
+          const payload = (await usersResponse.json().catch(() => ({}))) as {
+            message?: string;
+          };
+          throw new Error(payload.message ?? "Unable to load users.");
+        }
+
+        const usersPayload = (await usersResponse.json()) as { users?: ApiUser[] };
+        syncUsersFromApi(usersPayload.users ?? []);
+
+        if (companiesResponse.ok) {
+          const companiesPayload = (await companiesResponse.json()) as {
+            companies?: Company[];
+          };
+          syncCompaniesFromApi(companiesPayload.companies ?? []);
+        }
+      } catch (error) {
+        setPageError(error instanceof Error ? error.message : "Unable to load users.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadAdminData();
+  }, [authToken, canManage, syncCompaniesFromApi, syncUsersFromApi]);
+
   const assignableRoles = useMemo(() => {
     if (isSuperAdmin) {
       return superAdminVisibleRoles;
     }
-    return roles.filter((r) => r !== "SUPER_ADMIN" && r !== "ADMIN");
+    return roles.filter((item) => item !== "SUPER_ADMIN" && item !== "ADMIN");
   }, [isSuperAdmin]);
 
   const companyMap = useMemo(
@@ -67,6 +126,7 @@ export default function UsersScreen() {
       ),
     [visibleUsers]
   );
+
   const canCreate = Boolean(
     name.trim() && email.trim() && password && (isSuperAdmin ? companyId : currentUser?.companyId)
   );
@@ -80,7 +140,14 @@ export default function UsersScreen() {
     );
   }
 
-  const handleCreate = () => {
+  const replaceUserInStore = (nextUser: ApiUser) => {
+    const nextUsers = users.some((user) => user.id === nextUser.id)
+      ? users.map((user) => (user.id === nextUser.id ? nextUser : user))
+      : [...users, nextUser];
+    syncUsersFromApi(nextUsers);
+  };
+
+  const handleCreate = async () => {
     const normalizedEmail = email.trim().toLowerCase();
     if (!name.trim() || !normalizedEmail || !password) {
       setCreateError("Name, email, and password are required.");
@@ -90,34 +157,101 @@ export default function UsersScreen() {
       setCreateError("Enter a valid email address.");
       return;
     }
-    if (password.length < 6) {
-      setCreateError("Password must be at least 6 characters.");
+    if (password.length < 8) {
+      setCreateError("Password must be at least 8 characters.");
       return;
     }
     if (users.some((user) => user.email.trim().toLowerCase() === normalizedEmail)) {
       setCreateError("An account with this email already exists.");
       return;
     }
-    setCreateError("");
-    const safeRole = assignableRoles.includes(role)
-      ? role
-      : assignableRoles[0] ?? "OPERATOR";
+
+    const safeRole = assignableRoles.includes(role) ? role : assignableRoles[0] ?? "OPERATOR";
     const targetCompanyId = isSuperAdmin ? companyId : currentUser?.companyId;
     if (!targetCompanyId) {
       setCreateError("Select a company for this user.");
       return;
     }
-    createUser({
-      name: name.trim(),
-      email: email.trim(),
-      password,
-      companyId: targetCompanyId,
-      role: safeRole,
-      active: true
-    });
-    setName("");
-    setEmail("");
-    setPassword("");
+    if (!API_BASE_URL || !authToken) {
+      setCreateError("API connection is not configured.");
+      return;
+    }
+
+    setCreateError("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/users`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          email: normalizedEmail,
+          password,
+          companyId: targetCompanyId,
+          role: safeRole
+        })
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+        };
+        setCreateError(payload.message ?? "Unable to create user.");
+        return;
+      }
+
+      const payload = (await response.json()) as { user: ApiUser };
+      replaceUserInStore(payload.user);
+      setName("");
+      setEmail("");
+      setPassword("");
+      setRole(assignableRoles[0] ?? "OPERATOR");
+    } catch {
+      setCreateError("Unable to reach API to create user.");
+    }
+  };
+
+  const handleUserPatch = async (
+    userId: string,
+    patch: { role?: Role; active?: boolean; password?: string }
+  ) => {
+    if (!API_BASE_URL || !authToken) {
+      setPageError("API connection is not configured.");
+      return;
+    }
+
+    setPageError("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify(patch)
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+        };
+        setPageError(payload.message ?? "Unable to update user.");
+        return;
+      }
+
+      const payload = (await response.json()) as { user: ApiUser };
+      replaceUserInStore(payload.user);
+
+      if (patch.password) {
+        updateUser(userId, { password: patch.password });
+      }
+    } catch {
+      setPageError("Unable to reach API to update user.");
+    }
   };
 
   return (
@@ -213,31 +347,33 @@ export default function UsersScreen() {
         )}
         <Text style={styles.label}>Role</Text>
         <View style={styles.roleRow}>
-          {assignableRoles.map((r) => (
+          {assignableRoles.map((item) => (
             <Pressable
-              key={r}
-              onPress={() => setRole(r)}
+              key={item}
+              onPress={() => setRole(item)}
               accessibilityRole="button"
-              accessibilityLabel={`Select role ${r.replace("_", " ")}`}
-              style={[styles.roleChip, role === r && styles.roleChipActive]}
+              accessibilityLabel={`Select role ${item.replace("_", " ")}`}
+              style={[styles.roleChip, role === item && styles.roleChipActive]}
             >
-              <Text
-                style={[styles.roleText, role === r && styles.roleTextActive]}
-              >
-                {r.replace("_", " ")}
+              <Text style={[styles.roleText, role === item && styles.roleTextActive]}>
+                {item.replace("_", " ")}
               </Text>
             </Pressable>
           ))}
         </View>
         <Button
           label="Create user"
-          onPress={handleCreate}
+          onPress={() => {
+            void handleCreate();
+          }}
           disabled={!canCreate}
           accessibilityLabel="Create user"
         />
       </Card>
 
       <SectionHeader title="Active Users" subtitle="Tap to toggle status or adjust role." />
+      {pageError ? <Text style={styles.pageError}>{pageError}</Text> : null}
+      {loading ? <Text style={styles.pageMeta}>Loading latest users...</Text> : null}
       <View style={styles.stack}>
         {sortedUsers.map((user) => (
           <Card key={user.id}>
@@ -271,7 +407,7 @@ export default function UsersScreen() {
                     if (!nextPassword) {
                       return;
                     }
-                    updateUser(user.id, { password: nextPassword });
+                    void handleUserPatch(user.id, { password: nextPassword });
                     setPasswordDrafts((prev) => ({ ...prev, [user.id]: "" }));
                   }}
                   disabled={
@@ -292,7 +428,9 @@ export default function UsersScreen() {
                 </Pressable>
               </View>
               <Pressable
-                onPress={() => updateUser(user.id, { active: !user.active })}
+                onPress={() => {
+                  void handleUserPatch(user.id, { active: !user.active });
+                }}
                 disabled={
                   (user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
                   !isSuperAdmin
@@ -316,7 +454,7 @@ export default function UsersScreen() {
                     rotationPool[
                       (rotationPool.indexOf(user.role) + 1) % rotationPool.length
                     ] ?? user.role;
-                  updateUser(user.id, { role: nextRole });
+                  void handleUserPatch(user.id, { role: nextRole });
                 }}
                 disabled={
                   ((user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
@@ -396,6 +534,16 @@ const styles = StyleSheet.create({
   },
   stack: {
     gap: theme.spacing.md
+  },
+  pageError: {
+    marginBottom: theme.spacing.sm,
+    fontSize: 12,
+    color: theme.colors.danger
+  },
+  pageMeta: {
+    marginBottom: theme.spacing.sm,
+    fontSize: 12,
+    color: theme.colors.inkSubtle
   },
   userRow: {
     flexDirection: "row",

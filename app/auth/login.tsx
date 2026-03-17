@@ -271,7 +271,7 @@ export default function LoginScreen() {
   };
 
   return (
-    <Screen padded={false} scroll={false}>
+    <Screen padded={false}>
       <View style={styles.container}>
         <View style={styles.hero}>
           <Image
