@@ -14,8 +14,15 @@ import { Company, Role } from "../../../src/types";
 import { useCan, useCurrentUser } from "../../../src/hooks/useCurrentUser";
 
 const roles: Role[] = ["SUPER_ADMIN", "ADMIN", "MANAGER", "PLANNER", "OPERATOR", "VIEWER"];
-const superAdminVisibleRoles: Role[] = ["ADMIN"];
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/+$/, "");
+const ROLE_RANK: Record<Role, number> = {
+  SUPER_ADMIN: 5,
+  ADMIN: 4,
+  MANAGER: 3,
+  PLANNER: 2,
+  OPERATOR: 1,
+  VIEWER: 0
+};
 
 type ApiUser = {
   id: string;
@@ -102,9 +109,9 @@ export default function UsersScreen() {
 
   const assignableRoles = useMemo(() => {
     if (isSuperAdmin) {
-      return superAdminVisibleRoles;
+      return roles.filter((item) => item !== "SUPER_ADMIN");
     }
-    return roles.filter((item) => item !== "SUPER_ADMIN" && item !== "ADMIN");
+    return roles.filter((item) => ROLE_RANK[item] < ROLE_RANK.ADMIN);
   }, [isSuperAdmin]);
 
   const companyMap = useMemo(
@@ -114,7 +121,7 @@ export default function UsersScreen() {
 
   const visibleUsers = useMemo(() => {
     if (isSuperAdmin) {
-      return users.filter((user) => superAdminVisibleRoles.includes(user.role));
+      return users.filter((user) => user.role !== "SUPER_ADMIN");
     }
     return users.filter((user) => user.companyId === currentUser?.companyId);
   }, [currentUser?.companyId, isSuperAdmin, users]);
@@ -130,6 +137,18 @@ export default function UsersScreen() {
   const canCreate = Boolean(
     name.trim() && email.trim() && password && (isSuperAdmin ? companyId : currentUser?.companyId)
   );
+
+  const canManageTargetUser = (targetUser: ApiUser) => {
+    if (!currentUser) {
+      return false;
+    }
+
+    if (!isSuperAdmin && targetUser.companyId !== currentUser.companyId) {
+      return false;
+    }
+
+    return ROLE_RANK[currentUser.role] > ROLE_RANK[targetUser.role];
+  };
 
   if (!canManage) {
     return (
@@ -410,18 +429,12 @@ export default function UsersScreen() {
                     void handleUserPatch(user.id, { password: nextPassword });
                     setPasswordDrafts((prev) => ({ ...prev, [user.id]: "" }));
                   }}
-                  disabled={
-                    ((user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
-                      !isSuperAdmin) ||
-                    !(passwordDrafts[user.id] ?? "").trim()
-                  }
+                  disabled={!canManageTargetUser(user) || !(passwordDrafts[user.id] ?? "").trim()}
                   style={[
                     styles.secondaryButton,
                     styles.passwordButton,
                     !(passwordDrafts[user.id] ?? "").trim() && styles.disabledButton,
-                    (user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
-                      !isSuperAdmin &&
-                      styles.disabledButton
+                    !canManageTargetUser(user) && styles.disabledButton
                   ]}
                 >
                   <Text style={styles.secondaryText}>Update password</Text>
@@ -431,16 +444,11 @@ export default function UsersScreen() {
                 onPress={() => {
                   void handleUserPatch(user.id, { active: !user.active });
                 }}
-                disabled={
-                  (user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
-                  !isSuperAdmin
-                }
+                disabled={!canManageTargetUser(user)}
                 style={[
                   styles.secondaryButton,
                   !user.active && styles.secondaryButtonMuted,
-                  (user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
-                    !isSuperAdmin &&
-                    styles.disabledButton
+                  !canManageTargetUser(user) && styles.disabledButton
                 ]}
               >
                 <Text style={styles.secondaryText}>
@@ -449,24 +457,19 @@ export default function UsersScreen() {
               </Pressable>
               <Pressable
                 onPress={() => {
-                  const rotationPool = isSuperAdmin ? superAdminVisibleRoles : assignableRoles;
+                  const rotationPool = assignableRoles.filter(
+                    (item) => ROLE_RANK[item] < ROLE_RANK[currentUser?.role ?? "VIEWER"]
+                  );
                   const nextRole =
                     rotationPool[
                       (rotationPool.indexOf(user.role) + 1) % rotationPool.length
                     ] ?? user.role;
                   void handleUserPatch(user.id, { role: nextRole });
                 }}
-                disabled={
-                  ((user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
-                    !isSuperAdmin) ||
-                  isSuperAdmin
-                }
+                disabled={!canManageTargetUser(user)}
                 style={[
                   styles.secondaryButton,
-                  (((user.role === "SUPER_ADMIN" || user.role === "ADMIN") &&
-                    !isSuperAdmin) ||
-                    isSuperAdmin) &&
-                    styles.disabledButton
+                  !canManageTargetUser(user) && styles.disabledButton
                 ]}
               >
                 <Text style={styles.secondaryText}>Rotate role</Text>
