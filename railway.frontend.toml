@@ -1,0 +1,17 @@
+[build]
+builder = "RAILPACK"
+buildCommand = "npm run build"
+watchPatterns = [
+  "/app/**",
+  "/src/**",
+  "/package.json",
+  "/babel.config.js",
+  "/tsconfig.json",
+  "/app.json",
+  "/index.js"
+]
+
+[deploy]
+startCommand = "npx serve -s dist -l ${PORT}"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
