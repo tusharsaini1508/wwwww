@@ -20,3 +20,17 @@ out/
 coverage/
 # Test environment secrets should not be committed
 .env.test.local
+
+# Added by GitGuard (Node.js, React, Gradle (Kotlin DSL))
+# Local Spring properties may contain secrets and should not be committed
+application-local.properties
+# Local Spring YAML config may contain secrets
+application-local.yml
+# Local Spring YAML config may contain secrets
+application-local.yaml
+*.class
+*.jar
+*.war
+bin/
+.gradle/
+gradle.properties

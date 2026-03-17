@@ -5,6 +5,7 @@ import { authRoutes } from "./routes/auth.js";
 import { companyRoutes } from "./routes/companies.js";
 import { inventoryRoutes } from "./routes/inventory.js";
 import { setupRoutes } from "./routes/setup.js";
+import { userRoutes } from "./routes/users.js";
 
 const parseAllowedOrigins = (value: string) =>
   value
@@ -71,6 +72,7 @@ export const buildServer = () => {
   app.register(setupRoutes, { prefix: "/api" });
   app.register(authRoutes, { prefix: "/api" });
   app.register(companyRoutes, { prefix: "/api" });
+  app.register(userRoutes, { prefix: "/api" });
   app.register(inventoryRoutes, { prefix: "/api" });
 
   return app;

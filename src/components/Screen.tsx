@@ -21,7 +21,9 @@ export const Screen = ({ children, padded = true, scroll = true }: ScreenProps) 
           {children}
         </ScrollView>
       ) : (
-        <View style={[styles.content, padded && styles.padded]}>{children}</View>
+        <View style={[styles.fixedContent, styles.content, padded && styles.padded]}>
+          {children}
+        </View>
       )}
     </View>
   );
@@ -37,7 +39,10 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0
   },
-  
+  fixedContent: {
+    flex: 1,
+    minHeight: 0
+  },
   content: {
     flexGrow: 1,
     paddingBottom: theme.spacing.xxl,
