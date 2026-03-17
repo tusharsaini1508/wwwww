@@ -1,11 +1,13 @@
 import { sql } from "./db/client.js";
 import { env } from "./env.js";
+import { ensureBootstrapFromEnv } from "./lib/bootstrap.js";
 import { buildServer } from "./server.js";
 
 const app = buildServer();
 
 const start = async () => {
   try {
+    await ensureBootstrapFromEnv();
     await app.listen({
       host: "0.0.0.0",
       port: env.PORT
